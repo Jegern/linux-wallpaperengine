@@ -72,6 +72,10 @@ public:
      */
     virtual void dispatchEventQueue () = 0;
     /**
+     * @return Whether there is anything to draw on right now (a driver can lose all its outputs and get them back)
+     */
+    [[nodiscard]] virtual bool canRender () const { return true; }
+    /**
      * @return The app that owns this driver
      */
     [[nodiscard]] WallpaperApplication& getApp () const;

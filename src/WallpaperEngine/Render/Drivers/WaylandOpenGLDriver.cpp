@@ -17,6 +17,8 @@ extern "C" {
 #undef static
 
 #include <algorithm>
+#include <cerrno>
+#include <poll.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -129,7 +131,7 @@ handleGlobal (void* data, struct wl_registry* registry, uint32_t name, const cha
 }
 
 static void handleGlobalRemoved (void* data, struct wl_registry* registry, uint32_t id) {
-    // todo: outputs
+    static_cast<WaylandOpenGLDriver*> (data)->onOutputRemoved (id);
 }
 
 constexpr struct wl_registry_listener registryListener = {
@@ -231,19 +233,30 @@ void WaylandOpenGLDriver::finishEGL () const {
     eglReleaseThread ();
 }
 
-void WaylandOpenGLDriver::onLayerClose (Output::WaylandOutputViewport* viewport) {
-    sLog.error ("Compositor closed our LS, freeing data...");
+void WaylandOpenGLDriver::releaseViewportSurfaces (Output::WaylandOutputViewport* viewport) {
+    if (this->viewportInFocus == viewport) {
+	this->viewportInFocus = nullptr;
+    }
+
+    // a pending frame callback would call back into the viewport once the surface is gone
+    if (viewport->frameCallback) {
+	wl_callback_destroy (viewport->frameCallback);
+	viewport->frameCallback = nullptr;
+    }
 
     if (viewport->eglSurface) {
 	eglDestroySurface (m_eglContext.display, viewport->eglSurface);
+	viewport->eglSurface = nullptr;
     }
 
     if (viewport->eglWindow) {
 	wl_egl_window_destroy (viewport->eglWindow);
+	viewport->eglWindow = nullptr;
     }
 
     if (viewport->layerSurface) {
 	zwlr_layer_surface_v1_destroy (viewport->layerSurface);
+	viewport->layerSurface = nullptr;
     }
 
     if (viewport->xdgOutput) {
@@ -251,18 +264,120 @@ void WaylandOpenGLDriver::onLayerClose (Output::WaylandOutputViewport* viewport)
 	viewport->xdgOutput = nullptr;
     }
 
-    if (viewport->surface) {
-	wl_surface_destroy (viewport->surface);
+    if (viewport->cursorSurface) {
+	wl_surface_destroy (viewport->cursorSurface);
+	viewport->cursorSurface = nullptr;
     }
 
-    // remove the output from the list
-    std::erase (this->m_screens, viewport);
+    if (viewport->surface) {
+	wl_surface_destroy (viewport->surface);
+	viewport->surface = nullptr;
+    }
+
+    viewport->callbackInitialized = false;
+}
+
+void WaylandOpenGLDriver::onLayerClose (Output::WaylandOutputViewport* viewport) {
+    sLog.error ("Compositor closed our LS, freeing data...");
+
+    // the output itself stays known: if it is still there a later update gives it a new layer surface,
+    // and if it is going away the registry tells us and it is dropped for good
+    this->releaseViewportSurfaces (viewport);
+
+    // reset the viewports
+    this->getOutput ().reset ();
+}
+
+void WaylandOpenGLDriver::onOutputRemoved (uint32_t waylandName) {
+    const auto it = std::ranges::find_if (this->m_screens, [waylandName] (const auto* o) {
+	return o->waylandName == waylandName;
+    });
+
+    if (it == this->m_screens.end ()) {
+	return;
+    }
+
+    auto* viewport = *it;
+
+    sLog.out ("Output ", viewport->name, " was removed");
+
+    this->releaseViewportSurfaces (viewport);
+    std::erase (this->m_pendingOutputs, viewport);
+    this->m_screens.erase (it);
+
+    if (viewport->output) {
+	wl_output_release (viewport->output);
+	viewport->output = nullptr;
+    }
 
     // reset the viewports
     this->getOutput ().reset ();
 
     // finally free memory used by the viewport
     delete viewport;
+}
+
+void WaylandOpenGLDriver::onOutputDone (Output::WaylandOutputViewport* viewport) {
+    // nothing to do while starting up (the initial layer surfaces are made in one go) or if it already has one
+    if (!this->m_ready || viewport->layerSurface) {
+	return;
+    }
+
+    if (std::ranges::find (this->m_pendingOutputs, viewport) == this->m_pendingOutputs.end ()) {
+	this->m_pendingOutputs.push_back (viewport);
+    }
+}
+
+bool WaylandOpenGLDriver::canRender () const {
+    return std::ranges::any_of (this->m_screens, [] (const auto* o) { return o->layerSurface != nullptr; });
+}
+
+bool WaylandOpenGLDriver::shouldSetupOutput (const std::string& name) const {
+    if (m_context.settings.general.screenBackgrounds.contains (name)) {
+	return true;
+    }
+
+    // also check if this screen is in any span group
+    for (const auto& spanGroup : m_context.settings.general.spanGroups) {
+	if (std::ranges::find (spanGroup.screens, name) != spanGroup.screens.end ()) {
+	    return true;
+	}
+    }
+
+    return false;
+}
+
+void WaylandOpenGLDriver::processPendingOutputs () {
+    if (this->m_pendingOutputs.empty ()) {
+	return;
+    }
+
+    auto pending = std::move (this->m_pendingOutputs);
+    this->m_pendingOutputs.clear ();
+
+    for (auto* viewport : pending) {
+	// it could have been removed again, or given a layer surface, since it was queued
+	if (std::ranges::find (this->m_screens, viewport) == this->m_screens.end () || viewport->layerSurface
+	    || !this->shouldSetupOutput (viewport->name)) {
+	    continue;
+	}
+
+	sLog.out ("Output ", viewport->name, " is available again, creating its layer surface");
+
+	try {
+	    if (m_waylandContext.xdgOutputManager && !viewport->xdgOutput) {
+		viewport->setupXdgOutput (m_waylandContext.xdgOutputManager);
+		wl_display_roundtrip (m_waylandContext.display);
+	    }
+
+	    viewport->setupLS ();
+	    // start the frame chain for the new surface
+	    this->getApp ().update (viewport);
+	} catch (const std::exception& e) {
+	    sLog.error ("Could not restore the layer surface for ", viewport->name, ": ", e.what ());
+	    this->releaseViewportSurfaces (viewport);
+	}
+    }
 }
 
 WaylandOpenGLDriver::WaylandOpenGLDriver (ApplicationContext& context, WallpaperApplication& app) :
@@ -272,6 +387,7 @@ WaylandOpenGLDriver::WaylandOpenGLDriver (ApplicationContext& context, Wallpaper
     initEGL ();
     setupOutputLayerSurfaces ();
     initGLEW ();
+    m_ready = true;
 }
 
 void WaylandOpenGLDriver::initWaylandRegistry () {
@@ -307,24 +423,7 @@ void WaylandOpenGLDriver::setupOutputLayerSurfaces () {
     bool any = false;
 
     for (const auto& o : this->m_screens) {
-	bool shouldSetup = m_context.settings.general.screenBackgrounds.contains (o->name);
-
-	// also check if this screen is in any span group
-	if (!shouldSetup) {
-	    for (const auto& spanGroup : m_context.settings.general.spanGroups) {
-		for (const auto& screen : spanGroup.screens) {
-		    if (screen == o->name) {
-			shouldSetup = true;
-			break;
-		    }
-		}
-		if (shouldSetup) {
-		    break;
-		}
-	    }
-	}
-
-	if (!shouldSetup) {
+	if (!this->shouldSetupOutput (o->name)) {
 	    continue;
 	}
 
@@ -408,17 +507,60 @@ void WaylandOpenGLDriver::dispatchEventQueue () {
     // TODO: FRAMETIME CONTROL SHOULD GO BACK TO THE CWALLPAPAERAPPLICATION ONCE ACTUAL PARTICLES ARE IMPLEMENTED
     // TODO: AS THOSE, MORE THAN LIKELY, WILL REQUIRE OF A DIFFERENT PROCESSING RATE
 
-    // TODO: WRITE A NON-BLOCKING VERSION OF THIS ONCE PARTICLE SIMULATION STARTS WORKING
-    // TODO: OTHERWISE wl_display_dispatch WILL BLOCK IF NO SURFACES ARE BEING DRAWN
     static float startTime, endTime, minimumTime = 1.0f / this->m_context.settings.render.maximumFPS;
     // get the start time of the frame
     startTime = this->getRenderTime ();
 
-    if (wl_display_dispatch (m_waylandContext.display) == -1) {
-	m_requestedExit = true;
+    // Wait for events, but not forever: when nothing is being drawn (wallpaper fully covered, every output
+    // gone after a suspend) the compositor sends nothing, and the main loop still has to run for the
+    // playlist timers and for a stop request.
+    constexpr int IDLE_WAIT_MS = 250;
+    wl_display* display = m_waylandContext.display;
+    bool gotEvents = false;
+
+    while (wl_display_prepare_read (display) != 0) {
+	if (wl_display_dispatch_pending (display) == -1) {
+	    m_requestedExit = true;
+	    return;
+	}
     }
 
-    m_frameCounter++;
+    if (wl_display_flush (display) == -1 && errno != EAGAIN) {
+	wl_display_cancel_read (display);
+	m_requestedExit = true;
+	return;
+    }
+
+    pollfd descriptor = { wl_display_get_fd (display), POLLIN, 0 };
+    const int ready = poll (&descriptor, 1, IDLE_WAIT_MS);
+
+    if (ready > 0) {
+	if (wl_display_read_events (display) == -1) {
+	    m_requestedExit = true;
+	    return;
+	}
+	gotEvents = true;
+    } else {
+	wl_display_cancel_read (display);
+
+	// an interrupted wait is a signal (stop request), the loop checks for it
+	if (ready < 0 && errno != EINTR) {
+	    m_requestedExit = true;
+	    return;
+	}
+    }
+
+    if (wl_display_dispatch_pending (display) == -1) {
+	m_requestedExit = true;
+	return;
+    }
+
+    // outputs that came back get their layer surface here, outside of any wayland callback
+    this->processPendingOutputs ();
+
+    if (gotEvents) {
+	m_frameCounter++;
+    }
 
     endTime = this->getRenderTime ();
 

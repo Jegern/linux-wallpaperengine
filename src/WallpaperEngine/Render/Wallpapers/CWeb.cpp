@@ -119,5 +119,8 @@ CWeb::~CWeb () {
     CefDoMessageLoopWork ();
     this->m_browser->GetHost ()->CloseBrowser (true);
 
-    delete this->m_renderHandler;
+    // The render handler is reference counted and still held by the browser client, which releases
+    // it on its own. Deleting it here leaves the client with a dangling pointer and crashes when
+    // the browser is released (every stop and every playlist switch away from a web wallpaper).
+    this->m_renderHandler = nullptr;
 }

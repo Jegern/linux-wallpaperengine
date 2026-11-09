@@ -73,7 +73,14 @@ public:
     void dispatchEventQueue () override;
     [[nodiscard]] void* getProcAddress (const char* name) const override;
 
+    /** The compositor closed the layer surface of this viewport: frees its surfaces, keeps the output known */
     void onLayerClose (Output::WaylandOutputViewport*);
+    /** An output went away (monitor unplugged, system suspended...): frees everything tied to it */
+    void onOutputRemoved (uint32_t waylandName);
+    /** An output finished announcing its properties; queues it for a new layer surface if it has none */
+    void onOutputDone (Output::WaylandOutputViewport*);
+    /** @return true if at least one layer surface is available to draw on */
+    [[nodiscard]] bool canRender () const override;
     Output::WaylandOutputViewport* surfaceToViewport (const wl_surface*) const;
 
     Output::WaylandOutputViewport* viewportInFocus = nullptr;
@@ -93,8 +100,16 @@ private:
     WaylandContext m_waylandContext = {};
     mutable bool m_requestedExit;
 
+    /** Outputs that came back and still need their layer surface, handled outside of wayland callbacks */
+    std::vector<Output::WaylandOutputViewport*> m_pendingOutputs = {};
+    /** Set once the initial layer surfaces exist, from then on new outputs get theirs on arrival */
+    bool m_ready = false;
+
     void initWaylandRegistry ();
     void setupOutputLayerSurfaces ();
+    [[nodiscard]] bool shouldSetupOutput (const std::string& name) const;
+    void releaseViewportSurfaces (Output::WaylandOutputViewport* viewport);
+    void processPendingOutputs ();
     void initEGL ();
     void initGLEW ();
     void finishEGL () const;

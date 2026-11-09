@@ -478,6 +478,12 @@ void WallpaperApplication::updatePlaylists () {
 	return;
     }
 
+    // switching wallpapers builds GL resources, which needs a surface to draw on; with every output gone
+    // (suspend, monitors off) the switch simply waits and happens as soon as an output is back
+    if (!this->m_videoDriver->canRender ()) {
+	return;
+    }
+
     const auto now = std::chrono::steady_clock::now ();
 
     for (auto& [screen, playlist] : this->m_activePlaylists) {

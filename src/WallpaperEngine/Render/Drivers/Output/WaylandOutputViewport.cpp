@@ -60,7 +60,12 @@ static void mode (void* data, wl_output* output, uint32_t flags, int32_t width, 
     }
 }
 
-static void done (void* data, wl_output* wl_output) { static_cast<WaylandOutputViewport*> (data)->initialized = true; }
+static void done (void* data, wl_output* wl_output) {
+    const auto viewport = static_cast<WaylandOutputViewport*> (data);
+
+    viewport->initialized = true;
+    viewport->getDriver ()->onOutputDone (viewport);
+}
 
 static void scale (void* data, wl_output* wl_output, int32_t scale) {
     const auto viewport = static_cast<WaylandOutputViewport*> (data);
