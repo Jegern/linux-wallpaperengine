@@ -59,7 +59,9 @@ WebBrowserContext::WebBrowserContext (WallpaperEngine::Application::WallpaperApp
     commandLine->InitFromArgv (main_args.argc, main_args.argv);
 
     if (!commandLine->HasSwitch ("type")) {
-	this->m_browserApplication = new CEF::BrowserApp (wallpaperApplication);
+	this->m_mainApplication = new CEF::BrowserApp (wallpaperApplication);
+	// the reference counted pointer owns it from here
+	this->m_browserApplication = this->m_mainApplication;
     } else {
 	this->m_browserApplication = new CEF::SubprocessApp (wallpaperApplication);
     }
@@ -92,6 +94,14 @@ WebBrowserContext::WebBrowserContext (WallpaperEngine::Application::WallpaperApp
     if (!CefInitialize (main_args, settings, this->m_browserApplication, nullptr)) {
 	sLog.exception ("CefInitialize: failed");
     }
+}
+
+CefRefPtr<CEF::WPSchemeHandlerFactory> WebBrowserContext::getSchemeFactory () const {
+    if (!this->m_mainApplication) {
+	sLog.exception ("Only the main process can serve wallpaper files");
+    }
+
+    return this->m_mainApplication->getSchemeFactory ();
 }
 
 WebBrowserContext::~WebBrowserContext () {

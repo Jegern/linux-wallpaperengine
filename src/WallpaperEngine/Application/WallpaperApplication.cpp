@@ -31,6 +31,8 @@
 #include <thread>
 
 #define FULLSCREEN_CHECK_WAIT_TIME 250
+/** How many replaced backgrounds are kept alive while their browsers finish closing */
+#define RETIRED_BACKGROUNDS_KEPT 6
 
 float g_Time;
 float g_TimeLast;
@@ -434,6 +436,17 @@ void WallpaperApplication::advancePlaylist (
 
 	this->setupPropertiesForProject (*project);
 	this->ensureBrowserForProject (*project);
+
+	// the browser of the wallpaper being replaced closes in the background and can still be reading files
+	// from its project, so the project is kept around a while instead of being freed right away
+	if (auto current = this->m_backgrounds.find (screen);
+	    current != this->m_backgrounds.end () && current->second != nullptr) {
+	    this->m_retiredBackgrounds.push_back (std::move (current->second));
+
+	    while (this->m_retiredBackgrounds.size () > RETIRED_BACKGROUNDS_KEPT) {
+		this->m_retiredBackgrounds.pop_front ();
+	    }
+	}
 
 	this->m_backgrounds[screen] = std::move (project);
 

@@ -9,13 +9,11 @@ BrowserApp::BrowserApp (WallpaperEngine::Application::WallpaperApplication& appl
 CefRefPtr<CefBrowserProcessHandler> BrowserApp::GetBrowserProcessHandler () { return this; }
 
 void BrowserApp::OnContextInitialized () {
-    // register all the needed schemes, "wp" + the background id is going to be our scheme
-    for (const auto& [workshopId, factory] : this->getHandlerFactories ()) {
-	CefRegisterSchemeHandlerFactory (
-	    WPSchemeHandlerFactory::generateSchemeName (workshopId), static_cast<const char*> (nullptr), factory
-	);
-    }
+    // one handler serves every wallpaper under the wp scheme, wallpapers get registered on it as they load
+    CefRegisterSchemeHandlerFactory (WPENGINE_SCHEME, static_cast<const char*> (nullptr), this->m_schemeFactory);
 }
+
+CefRefPtr<WPSchemeHandlerFactory> BrowserApp::getSchemeFactory () const { return this->m_schemeFactory; }
 
 void BrowserApp::OnBeforeCommandLineProcessing (const CefString& process_type, CefRefPtr<CefCommandLine> command_line) {
     command_line->AppendSwitchWithValue (

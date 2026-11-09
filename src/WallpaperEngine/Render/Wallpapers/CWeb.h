@@ -48,6 +48,10 @@ private:
     CefRefPtr<CefBrowser> m_browser = nullptr;
     CefRefPtr<WallpaperEngine::WebBrowser::CEF::BrowserClient> m_client = nullptr;
     WallpaperEngine::WebBrowser::CEF::RenderHandler* m_renderHandler = nullptr;
+    /** The project whose files this browser loads, only used as a key (it can be gone before the browser) */
+    const WallpaperEngine::Data::Model::Project* m_project = nullptr;
+    /** Serves this wallpaper's files, kept so it can be unregistered even after the browser context is gone */
+    CefRefPtr<WallpaperEngine::WebBrowser::CEF::WPSchemeHandlerFactory> m_schemeFactory = nullptr;
 
     int m_width = 16;
     int m_height = 17;

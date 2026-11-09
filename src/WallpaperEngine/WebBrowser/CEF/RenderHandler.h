@@ -28,6 +28,10 @@ public:
 	int height
     ) override;
 
+    //! \brief Cuts the handler off from the wallpaper that owns it. The browser can keep calling the handler
+    //! for a while after the wallpaper is gone (it closes in the background), so from here on it does nothing.
+    void detach ();
+
     //! \brief CefBase interface
     IMPLEMENT_REFCOUNTING (RenderHandler);
 

@@ -6,14 +6,27 @@ RenderHandler::RenderHandler (WallpaperEngine::Render::Wallpapers::CWeb* webdata
 
 // Required by CEF
 void RenderHandler::GetViewRect (CefRefPtr<CefBrowser> browser, CefRect& rect) {
+    if (this->m_webdata == nullptr) {
+	// CEF needs a valid, non-empty rect
+	rect = CefRect (0, 0, 1, 1);
+	return;
+    }
+
     rect = CefRect (0, 0, this->m_webdata->getWidth (), this->m_webdata->getHeight ());
 }
+
+void RenderHandler::detach () { this->m_webdata = nullptr; }
 
 // Will be executed in CEF message loop
 void RenderHandler::OnPaint (
     CefRefPtr<CefBrowser> browser, PaintElementType type, const RectList& dirtyRects, const void* buffer,
     const int width, const int height
 ) {
+    // the wallpaper is gone, there is no texture to draw on
+    if (this->m_webdata == nullptr) {
+	return;
+    }
+
     glActiveTexture (GL_TEXTURE0);
     glBindTexture (GL_TEXTURE_2D, this->texture ());
     glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, buffer);

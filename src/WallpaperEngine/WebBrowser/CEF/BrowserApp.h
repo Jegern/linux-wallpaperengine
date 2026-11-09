@@ -23,7 +23,12 @@ public:
     void OnBeforeCommandLineProcessing (const CefString& process_type, CefRefPtr<CefCommandLine> command_line) override;
     void OnBeforeChildProcessLaunch (CefRefPtr<CefCommandLine> command_line) override;
 
+    /** @return The factory that serves the files of the wallpapers */
+    [[nodiscard]] CefRefPtr<WPSchemeHandlerFactory> getSchemeFactory () const;
+
 private:
+    CefRefPtr<WPSchemeHandlerFactory> m_schemeFactory = new WPSchemeHandlerFactory ();
+
     IMPLEMENT_REFCOUNTING (BrowserApp);
     DISALLOW_COPY_AND_ASSIGN (BrowserApp);
 };

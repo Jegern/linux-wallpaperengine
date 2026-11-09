@@ -30,9 +30,11 @@ CWeb::CWeb (
     browserSettings.windowless_frame_rate = std::max (60, context.getApp ().getContext ().settings.render.maximumFPS);
 
     this->m_client = new WebBrowser::CEF::BrowserClient (m_renderHandler);
-    // use the custom scheme for the wallpaper's files
-    const std::string htmlURL = WPSchemeHandlerFactory::generateSchemeName (this->getWeb ().project.workshopId)
-	+ "://root/" + this->getWeb ().filename;
+    // serve the wallpaper's files through the custom scheme, under a host of its own
+    this->m_project = &this->getWeb ().project;
+    this->m_schemeFactory = this->m_browserContext.getSchemeFactory ();
+    const std::string htmlURL = std::string (WPENGINE_SCHEME) + "://"
+	+ this->m_schemeFactory->registerProject (*this->m_project) + "/" + this->getWeb ().filename;
     this->m_browser
 	= CefBrowserHost::CreateBrowserSync (window_info, this->m_client, htmlURL, browserSettings, nullptr, nullptr);
 }
@@ -122,5 +124,12 @@ CWeb::~CWeb () {
     // The render handler is reference counted and still held by the browser client, which releases
     // it on its own. Deleting it here leaves the client with a dangling pointer and crashes when
     // the browser is released (every stop and every playlist switch away from a web wallpaper).
+    // The browser closes in the background, so it can still call the handler for a while: cut it off
+    // from this object, which is about to be gone.
+    this->m_renderHandler->detach ();
     this->m_renderHandler = nullptr;
+
+    // requests still on the way for this wallpaper fail from now on (the factory is held here because
+    // the browser context can already be gone when wallpapers are destroyed at shutdown)
+    this->m_schemeFactory->unregisterProject (this->m_project);
 }

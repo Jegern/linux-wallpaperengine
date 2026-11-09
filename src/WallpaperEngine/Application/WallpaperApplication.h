@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <deque>
 #include <random>
 
 #include "WallpaperEngine/Application/ApplicationContext.h"
@@ -165,6 +166,8 @@ private:
     ApplicationContext& m_context;
     /** Maps screens to backgrounds */
     std::map<std::string, ProjectUniquePtr> m_backgrounds {};
+    /** Backgrounds that were switched away from, kept for a while as their browsers close in the background */
+    std::deque<ProjectUniquePtr> m_retiredBackgrounds {};
     std::map<std::string, ActivePlaylist> m_activePlaylists {};
 
     std::unique_ptr<WallpaperEngine::Audio::Drivers::Detectors::AudioPlayingDetector> m_audioDetector = nullptr;
